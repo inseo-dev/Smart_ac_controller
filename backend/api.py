@@ -52,6 +52,12 @@ def create_user():
             "result": "failed",
             "fail_reason": "invalid_type"
         }), 400
+    # 온도 범위 초과
+    if temp_preferred > 30 and temp_preferred < 18:
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "temperature out of range"
+        }), 400
     
     # BLE 주소 형식 오류
     if ble_address:
@@ -150,6 +156,12 @@ def update_user(user_id):
         return jsonify({
             "result": "failed",
             "fail_reason": "invalid_type"
+        }), 400
+    # 온도범위초과
+    if temp_preferred > 30 and temp_preferred < 18:
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "temperature out of range"
         }), 400
     
     # BLE 주소 형식 오류
@@ -308,7 +320,7 @@ def get_users_in_room():
             FROM user_presence up
             JOIN user_info ui 
             ON up.user_id = ui.user_id 
-            WHERE ble_rssi > -70
+            WHERE ble_rssi >= -70 AND ble_rssi IS NOT NULL 
             GROUP BY up.user_id
             ORDER BY max(detected_time) DESC
             """
