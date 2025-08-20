@@ -536,7 +536,7 @@ ir_code = {
 def post_ir():
     data = request.get_json(silent=True) or {}
     raw_signal_data = data.get("raw_signal_data", None)
-    decoded_action = ir_code[raw_signal_data]
+    decoded_action = ir_code.get(raw_signal_data, None)
 
     # 한국 시간 설정
     kst = pytz.timezone("Asia/Seoul")
@@ -548,6 +548,12 @@ def post_ir():
          return jsonify({
                 "result":"failed",
                 "fail_reason": "missing_required_field"
+            }),400
+    # 잘못된 ir코드
+    if decoded_action is None:
+        return jsonify({
+                "result":"failed",
+                "fail_reason": "wrong_ir_code"
             }),400
     
     # 타입 불일치
