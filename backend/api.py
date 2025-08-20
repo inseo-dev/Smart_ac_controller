@@ -528,22 +528,21 @@ def post_ac_action():
 
 # ir 코드
 ir_code = {
-        "0x83D6D202": "off",
-        "0x2BD80B30": "on",
-        "0xD3E0CB48" : "30",
-        "0xB5EC9D65" : "29",
-        "0xFE0F2A24" : "28",
-        "0xD29E0109" : "27",
-        "0xFB36156" : "26",
-        "0xF5BF39BF" : "25",
-        "0x59D52730" : "24",
-        "0x449BEA4D" : "23",
-        "0xC36335F2" : "22",
-        "0xA96F0E5B" : "21",
-        "0x68E4752C" : "20",
-        "0x2965DF09" : "19",
-        "0x14B34D1C" : "18"
-    }
+    "0x83D6D202": "off",
+    "0x494AECFE": "18",
+    "0xC40CEF6F": "19",
+    "0xD0841BCE": "20",
+    "0xBB68F8D3": "21",
+    "0xD55D206A": "22",
+    "0xA13493CD": "23",
+    "0x9E0385F8": "24",
+    "0xBDF9AA79": "25",
+    "0xDBEDD85C": "26",
+    "0xD29E0109": "27",
+    "0xB4EEF966": "28",
+    "0xDE3DD4D": "29",
+    "0x2BD80B30": "30"
+}
 # 리모컨 조작 정보 전송 api
 @app.route('/ardu_serv/ir', methods = ['POST'])
 def post_ir():
@@ -603,9 +602,9 @@ def post_ir():
             
             if decoded_action == "off":
                 oper_action = "OFF"
-            elif decoded_action == "on":
-                oper_action = "ON"
-                target_temp = 25
+            #elif decoded_action == "on":
+            #    oper_action = "ON"
+            #    target_temp = 25
             else:
                 oper_action = "SET_TEMP"
                 target_temp = int(decoded_action)
