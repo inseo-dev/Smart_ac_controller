@@ -625,7 +625,7 @@ def get_ac_temp():
                 return jsonify({
                     "result": "failed",
                     "ac_state": None,
-                    "fail_reason": "no_ac_status" 
+                    "fail_reason": "no_ac_state" 
                 })
 
             return jsonify({
