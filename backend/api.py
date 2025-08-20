@@ -26,7 +26,7 @@ CORS(app)
 # frontend <-> server
 ############################################
 
-# 사용자 생성
+# 사용자 생성 api
 @app.route('/fr_serv/users', methods = ['POST'])
 def create_user():
     data = request.get_json(silent=True) or {}
@@ -103,7 +103,7 @@ def create_user():
             "fail_reason": "internal_server_error"
         }),500
 
-# 사용자 목록 조회
+# 사용자 목록 조회 api
 @app.route('/serv_fr/users', methods=['GET'])
 def get_user_list():    
     try:
@@ -132,7 +132,7 @@ def get_user_list():
             "fail_reason": "internal_server_error"
         })
 
-# 사용자 수정
+# 사용자 수정 api
 @app.route('/fr_serv/users/<int:user_id>', methods=['PATCH'])
 def update_user(user_id):
     data = request.get_json(silent=True) or {}
@@ -204,7 +204,7 @@ def update_user(user_id):
         }),500
 
 
-# 사용자 삭제
+# 사용자 삭제 api
 @app.route('/fr_serv/users/<int:user_id>', methods=['DELETE'])
 def delete_user(user_id):    
     try:
@@ -230,7 +230,7 @@ def delete_user(user_id):
             "fail_reason": "internal_server_error"
         })
 
-# 에어컨 상태 조회 
+# 에어컨 상태 조회 api
 @app.route('/serv_fr/ac/state', methods=['GET'])
 def get_ac_state():    
     try:
@@ -260,7 +260,7 @@ def get_ac_state():
             "fail_reason": "internal_server_error"
         })
     
-# 현재 설정 온도 조회(우선 방안에 있는 사람들 선호온도 평균으로 구함/소수점 첫째자리 반올림)
+# 현재 설정 온도 조회 api (우선 방안에 있는 사람들 선호온도 평균으로 구함/소수점 첫째자리 반올림) 
 @app.route('/serv_fr/env/target_temp', methods=['GET'])
 def get_target_temp():    
     try:
@@ -296,7 +296,7 @@ def get_target_temp():
             "fail_reason": "internal_server_error"
         })
     
-# 현재 공간에 있는 사용자 조회(rssi 범위 : 0 ~ -70)
+# 현재 공간에 있는 사용자 조회 api(rssi 범위 : 0 ~ -70)
 @app.route('/serv_fr/detections/users', methods=['GET'])
 def get_users_in_room():    
     try:
@@ -333,7 +333,7 @@ def get_users_in_room():
 # arduino -> server
 ############################################
 
-# 블루투스 감지 전송
+# 블루투스 감지 전송 api
 @app.route('/ardu_serv/detections', methods = ['POST'])
 def post_ble():
     data = request.get_json(silent=True) or {}
@@ -433,7 +433,7 @@ def post_ble():
             "fail_reason": "internal_server_error"
         }),500
 
-# 에어컨 작동 정보 전송
+# 에어컨 작동 정보 전송 api
 @app.route('/ardu_serv/logs', methods = ['POST'])
 def post_ac_action():
     data = request.get_json(silent=True) or {}
@@ -531,7 +531,7 @@ ir_code = {
         "0x2965DF09" : "19",
         "0x14B34D1C" : "18"
     }
-# 리모컨 조작 정보 전송
+# 리모컨 조작 정보 전송 api
 @app.route('/ardu_serv/ir', methods = ['POST'])
 def post_ir():
     data = request.get_json(silent=True) or {}
@@ -605,7 +605,7 @@ def post_ir():
 # server -> arduino
 ############################################
 
-# 에어컨 설정 호출
+# 에어컨 설정 호출 api
 @app.route('/serv_ardu/ac/users', methods=['GET'])
 def get_ac_temp():    
     try:
