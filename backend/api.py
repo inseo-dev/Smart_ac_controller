@@ -5,6 +5,7 @@ import json
 from flask_cors import CORS
 from enum import Enum
 import re
+import pytz
 
 def get_connection():
     return pymysql.connect(
@@ -25,7 +26,7 @@ CORS(app)
 # frontend <-> server
 ############################################
 
-# 사용자 생성
+# 사용자 생성 api
 @app.route('/fr_serv/users', methods = ['POST'])
 def create_user():
     data = request.get_json(silent=True) or {}
@@ -102,7 +103,7 @@ def create_user():
             "fail_reason": "internal_server_error"
         }),500
 
-# 사용자 목록 조회
+# 사용자 목록 조회 api
 @app.route('/serv_fr/users', methods=['GET'])
 def get_user_list():    
     try:
@@ -110,7 +111,7 @@ def get_user_list():
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT user_name , temp_preferred, ble_address
+            SELECT user_id, user_name , temp_preferred, ble_address
             FROM user_info
             ORDER BY user_name;
             """
@@ -131,7 +132,7 @@ def get_user_list():
             "fail_reason": "internal_server_error"
         })
 
-# 사용자 수정
+# 사용자 수정 api
 @app.route('/fr_serv/users/<int:user_id>', methods=['PATCH'])
 def update_user(user_id):
     data = request.get_json(silent=True) or {}
@@ -203,7 +204,7 @@ def update_user(user_id):
         }),500
 
 
-# 사용자 삭제
+# 사용자 삭제 api
 @app.route('/fr_serv/users/<int:user_id>', methods=['DELETE'])
 def delete_user(user_id):    
     try:
@@ -229,7 +230,7 @@ def delete_user(user_id):
             "fail_reason": "internal_server_error"
         })
 
-# 에어컨 상태 조회 
+# 에어컨 상태 조회 api
 @app.route('/serv_fr/ac/state', methods=['GET'])
 def get_ac_state():    
     try:
@@ -237,7 +238,7 @@ def get_ac_state():
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT *
+            SELECT ac_action, ac_temp
             FROM ac_state
             ORDER BY timestamp DESC
             LIMIT 1;
@@ -248,10 +249,7 @@ def get_ac_state():
             return jsonify({
                 "result": "success", 
                 "fail_reason": None,
-                "ac_state": {
-                    "ac_action":row["ac_action"],
-		            "ac_temp":row["ac_temp"]
-                }
+                "ac_state": row
             })
     # 서버 내부 문제
     except Exception as e:
@@ -262,7 +260,7 @@ def get_ac_state():
             "fail_reason": "internal_server_error"
         })
     
-# 현재 설정 온도 조회
+# 현재 설정 온도 조회 api (우선 방안에 있는 사람들 선호온도 평균으로 구함/소수점 첫째자리 반올림) 
 @app.route('/serv_fr/env/target_temp', methods=['GET'])
 def get_target_temp():    
     try:
@@ -270,16 +268,24 @@ def get_target_temp():
         
         with conn.cursor() as cursor:
             sql = """
-            
+            SELECT round(AVG(temp_preferred),0) AS avg_temp
+            FROM(
+			    SELECT ui.temp_preferred
+                FROM user_presence up
+                JOIN user_info ui 
+                ON up.user_id = ui.user_id 
+                WHERE ble_rssi > -70
+                GROUP BY up.user_id
+                ORDER BY max(detected_time) DESC
+            ) t;
             """
             cursor.execute(sql)
-            rows = cursor.fetchall()
+            row = cursor.fetchone()
 
-            #더미데이터
             return jsonify({
                 "result": "success", 
                 "fail_reason": None,
-                "target_temp": 25 
+                "target_temp": row["avg_temp"]
             })
     # 서버 내부 문제
     except Exception as e:
@@ -290,7 +296,7 @@ def get_target_temp():
             "fail_reason": "internal_server_error"
         })
     
-# 현재 공간에 있는 사용자 조회(rssi 범위 : 0 ~ -70)
+# 현재 공간에 있는 사용자 조회 api(rssi 범위 : 0 ~ -70)
 @app.route('/serv_fr/detections/users', methods=['GET'])
 def get_users_in_room():    
     try:
@@ -298,7 +304,7 @@ def get_users_in_room():
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT user_name, temp_preferred, ble_address
+            SELECT up.user_id,user_name, temp_preferred, ble_address
             FROM user_presence up
             JOIN user_info ui 
             ON up.user_id = ui.user_id 
@@ -322,5 +328,321 @@ def get_users_in_room():
             "user_info": None,
             "fail_reason": "internal_server_error"
         })
+    
+############################################
+# arduino -> server
+############################################
+
+# 블루투스 감지 전송 api
+@app.route('/ardu_serv/detections', methods = ['POST'])
+def post_ble():
+    data = request.get_json(silent=True) or {}
+    ble_address = data.get("ble_address", None)
+    ble_rssi = data.get("ble_rssi",None)
+
+    # 한국 시간 설정
+    kst = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    now_time = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+
+    detected_time = now_time
+
+    # 필수 정보 누락
+    if not ble_address or not ble_rssi or not detected_time:
+         return jsonify({
+                "result":"failed",
+                "fail_reason": "missing_required_field"
+            }),400
+    
+    # 타입 불일치
+    if ble_rssi is not None and not isinstance(ble_rssi, (int, float)):
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "invalid_type"
+        }), 400
+    
+    # rssi 범위 오류
+    if ble_rssi > 0 or ble_rssi < -100:
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "ble_rssi_out_of_range"
+        }), 400
+    
+    # BLE 주소 형식 오류
+    if ble_address:
+        pattern = r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
+        if not re.match(pattern, ble_address):
+            return jsonify({
+                "result": "failed",
+                "fail_reason": "invalid_ble_address_format"
+            }), 400
+    
+    try:
+        conn = get_connection()
+        
+        with conn.cursor() as cursor:
+            # 같은 시간일 경우 에러
+            time_sql = """
+            SELECT count(*)
+            FROM user_presence
+            WHERE detected_time = %s
+            """
+            cursor.execute(time_sql, (detected_time,))
+            if cursor.fetchone()["count(*)"] != 0:
+                return jsonify({
+                          "result": "failed",
+                          "fail_reason": "duplicate_time"
+                     }),400
+
+            # DB에서 사용자 id 찾음
+            search_sql = """
+            SELECT user_id
+            FROM user_info
+            WHERE ble_address = %s
+            """
+            cursor.execute(search_sql, (ble_address,))
+            row = cursor.fetchone()
+
+            # DB등록된 사용자인지 BLE 주소 확인
+            if not row:
+                return jsonify({
+                          "result": "failed",
+                          "fail_reason": "BLE_address_is_not_registered"
+                     }),400
+            
+            search_user_id = row["user_id"] 
+
+            # DB에 정보 생성
+            sql = """
+            INSERT INTO user_presence (user_id, ble_rssi, detected_time)
+            VALUES (%s, %s, %s)
+            """
+            cursor.execute(sql,(search_user_id, ble_rssi, detected_time))
+            
+            conn.commit()
+
+            return jsonify({
+                "result": "success", 
+                "fail_reason": None
+            })
+    # 서버 내부 문제
+    except Exception as e:
+        print("에러 발생: ", str(e))
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "internal_server_error"
+        }),500
+
+# 에어컨 작동 정보 전송 api
+@app.route('/ardu_serv/logs', methods = ['POST'])
+def post_ac_action():
+    data = request.get_json(silent=True) or {}
+    ac_action = data.get("ac_action", None)
+    ac_temp = data.get("ac_temp",None)
+
+    # 한국 시간 설정
+    kst = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    now_time = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+
+    # 필수 정보 누락
+    if not ac_action or not ac_temp :
+         return jsonify({
+                "result":"failed",
+                "fail_reason": "missing_required_field"
+            }),400
+    
+    # 타입 불일치
+    if ac_temp is not None and not isinstance(ac_temp, (float)):
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "invalid_type"
+        }), 400
+    if ac_action is not None and not isinstance(ac_action, (str)):
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "invalid_type"
+        }), 400
+    
+    try:
+        conn = get_connection()
+        
+        with conn.cursor() as cursor:
+            # 같은 시간일 경우 에러
+            time_sql = """
+            SELECT count(*)
+            FROM ac_state
+            WHERE timestamp = %s
+            """
+            cursor.execute(time_sql, (now_time,))
+            if cursor.fetchone()["count(*)"] != 0:
+                return jsonify({
+                          "result": "failed",
+                          "fail_reason": "duplicate_time"
+                     }),400
+            # OFF일 경우
+            if ac_action[0] == "0":
+                ac_action = "OFF"
+                ac_temp = None
+            # ON일 경우
+            elif ac_action[0] == "1":
+                ac_action = "ON"
+            # t일 경우
+            elif ac_action[0] == "t":
+                ac_temp = float(ac_action[1:])
+                ac_action = "ON"
+                
+            # DB에 정보 생성
+            sql = """
+            INSERT INTO ac_state (ac_action, ac_temp, timestamp)
+            VALUES (%s, %s, %s)
+            """
+            cursor.execute(sql,(ac_action, ac_temp, now_time))
+            
+            conn.commit()
+
+            return jsonify({
+                "result": "success", 
+                "fail_reason": None
+            })
+    # 서버 내부 문제
+    except Exception as e:
+        print("에러 발생: ", str(e))
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "internal_server_error"
+        }),500
+
+# ir 코드
+ir_code = {
+        "0x83D6D202": "off",
+        "0x2BD80B30": "on",
+        "0xD3E0CB48" : "30",
+        "0xB5EC9D65" : "29",
+        "0xFE0F2A24" : "28",
+        "0xD29E0109" : "27",
+        "0xFB36156" : "26",
+        "0xF5BF39BF" : "25",
+        "0x59D52730" : "24",
+        "0x449BEA4D" : "23",
+        "0xC36335F2" : "22",
+        "0xA96F0E5B" : "21",
+        "0x68E4752C" : "20",
+        "0x2965DF09" : "19",
+        "0x14B34D1C" : "18"
+    }
+# 리모컨 조작 정보 전송 api
+@app.route('/ardu_serv/ir', methods = ['POST'])
+def post_ir():
+    data = request.get_json(silent=True) or {}
+    raw_signal_data = data.get("raw_signal_data", None)
+    decoded_action = ir_code.get(raw_signal_data, None)
+
+    # 한국 시간 설정
+    kst = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    recorded_time = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 필수 정보 누락
+    if not raw_signal_data:
+         return jsonify({
+                "result":"failed",
+                "fail_reason": "missing_required_field"
+            }),400
+    # 잘못된 ir코드
+    if decoded_action is None:
+        return jsonify({
+                "result":"failed",
+                "fail_reason": "wrong_ir_code"
+            }),400
+    
+    # 타입 불일치
+    if raw_signal_data is not None and not isinstance(raw_signal_data, (str)):
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "invalid_type"
+        }), 400
+    
+    try:
+        conn = get_connection()
+        
+        with conn.cursor() as cursor:
+            # 같은 시간일 경우 에러
+            time_sql = """
+            SELECT count(*)
+            FROM ir_logs
+            WHERE recorded_time = %s
+            """
+            cursor.execute(time_sql, (recorded_time,))
+            if cursor.fetchone()["count(*)"] != 0:
+                return jsonify({
+                          "result": "failed",
+                          "fail_reason": "duplicate_time"
+                     }),400
+            
+            # DB에 정보 생성
+            sql = """
+            INSERT INTO ir_logs (raw_signal_data, decoded_action, recorded_time)
+            VALUES (%s, %s, %s)
+            """
+            cursor.execute(sql,(raw_signal_data, decoded_action, recorded_time))
+            
+            conn.commit()
+
+            return jsonify({
+                "result": "success", 
+                "fail_reason": None
+            })
+    # 서버 내부 문제
+    except Exception as e:
+        print("에러 발생: ", str(e))
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "internal_server_error"
+        }),500
+    
+############################################
+# server -> arduino
+############################################
+
+# 에어컨 설정 호출 api
+@app.route('/serv_ardu/ac/users', methods=['GET'])
+def get_ac_temp():    
+    try:
+        conn = get_connection()
+        
+        with conn.cursor() as cursor:
+            sql = """
+            SELECT ac_action, ac_temp
+            FROM ac_state
+            ORDER BY timestamp DESC
+            LIMIT 1;
+            """
+            cursor.execute(sql)
+            row = cursor.fetchone()
+
+            if row is None:
+                return jsonify({
+                    "result": "failed",
+                    "ac_state": None,
+                    "fail_reason": "no_ac_state" 
+                })
+
+            return jsonify({
+                "result": "success", 
+                "fail_reason": None,
+                "ac_state": row
+            })
+    # 서버 내부 문제
+    except Exception as e:
+        print("에러 발생: ", str(e))
+        return jsonify({
+            "result": "failed",
+            "ac_state": None,
+            "fail_reason": "internal_server_error"
+        })
+    
+
+
 
 app.run(debug=True, host='0.0.0.0', port=5000)
