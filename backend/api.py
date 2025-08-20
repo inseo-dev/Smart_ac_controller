@@ -430,7 +430,6 @@ def post_ble():
         print("에러 발생: ", str(e))
         return jsonify({
             "result": "failed",
-            "user_info": None,
             "fail_reason": "internal_server_error"
         }),500
 
@@ -465,22 +464,6 @@ def post_ac_action():
             "fail_reason": "invalid_type"
         }), 400
     
-    # ac_action Off일 경우
-    if ac_action[0] == "0":
-        pass
-    # On 일 경우
-    elif ac_action[0] == "1":
-        pass
-    # 온도 조절일 경우
-    elif ac_action[0] == "t":
-        pass
-    # 온도 +1도씨
-    elif ac_action[0] == "+":
-        pass
-    # 온도 -1도씨
-    elif ac_action[0] == "-":
-        pass
-    
     try:
         conn = get_connection()
         
@@ -488,8 +471,8 @@ def post_ac_action():
             # 같은 시간일 경우 에러
             time_sql = """
             SELECT count(*)
-            FROM user_presence
-            WHERE detected_time = %s
+            FROM ac_state
+            WHERE timestamp = %s
             """
             cursor.execute(time_sql, (now_time,))
             if cursor.fetchone()["count(*)"] != 0:
@@ -497,15 +480,26 @@ def post_ac_action():
                           "result": "failed",
                           "fail_reason": "duplicate_time"
                      }),400
-
+            # OFF일 경우
+            if ac_action[0] == "0":
+                ac_action = "OFF"
+                ac_temp = None
+            # ON일 경우
+            elif ac_action[0] == "1":
+                ac_action = "ON"
+            # t일 경우
+            elif ac_action[0] == "t":
+                ac_temp = float(ac_action[1:])
+                ac_action = "ON"
+                
             # DB에 정보 생성
             sql = """
-            INSERT INTO user_presence (user_id, ble_rssi, detected_time)
+            INSERT INTO ac_state (ac_action, ac_temp, timestamp)
             VALUES (%s, %s, %s)
             """
-            #cursor.execute(sql,(search_user_id, ble_rssi, now_time))
+            cursor.execute(sql,(ac_action, ac_temp, now_time))
             
-            #conn.commit()
+            conn.commit()
 
             return jsonify({
                 "result": "success", 
@@ -516,10 +510,91 @@ def post_ac_action():
         print("에러 발생: ", str(e))
         return jsonify({
             "result": "failed",
-            "user_info": None,
             "fail_reason": "internal_server_error"
         }),500
 
+# ir 코드
+ir_code = {
+        "0x83D6D202": "off",
+        "0x2BD80B30": "on",
+        "0xD3E0CB48" : "30",
+        "0xB5EC9D65" : "29",
+        "0xFE0F2A24" : "28",
+        "0xD29E0109" : "27",
+        "0xFB36156" : "26",
+        "0xF5BF39BF" : "25",
+        "0x59D52730" : "24",
+        "0x449BEA4D" : "23",
+        "0xC36335F2" : "22",
+        "0xA96F0E5B" : "21",
+        "0x68E4752C" : "20",
+        "0x2965DF09" : "19",
+        "0x14B34D1C" : "18"
+    }
+# 리모컨 조작 정보 전송
+@app.route('/ardu_serv/ir', methods = ['POST'])
+def post_ir():
+    data = request.get_json(silent=True) or {}
+    raw_signal_data = data.get("raw_signal_data", None)
+    decoded_action = ir_code[raw_signal_data]
+
+    # 한국 시간 설정
+    kst = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    recorded_time = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 필수 정보 누락
+    if not raw_signal_data:
+         return jsonify({
+                "result":"failed",
+                "fail_reason": "missing_required_field"
+            }),400
+    
+    # 타입 불일치
+    if raw_signal_data is not None and not isinstance(raw_signal_data, (str)):
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "invalid_type"
+        }), 400
+    
+    try:
+        conn = get_connection()
+        
+        with conn.cursor() as cursor:
+            # 같은 시간일 경우 에러
+            time_sql = """
+            SELECT count(*)
+            FROM ir_logs
+            WHERE recorded_time = %s
+            """
+            cursor.execute(time_sql, (recorded_time,))
+            if cursor.fetchone()["count(*)"] != 0:
+                return jsonify({
+                          "result": "failed",
+                          "fail_reason": "duplicate_time"
+                     }),400
+            
+            # DB에 정보 생성
+            sql = """
+            INSERT INTO ir_logs (raw_signal_data, decoded_action, recorded_time)
+            VALUES (%s, %s, %s)
+            """
+            cursor.execute(sql,(raw_signal_data, decoded_action, recorded_time))
+            
+            conn.commit()
+
+            return jsonify({
+                "result": "success", 
+                "fail_reason": None
+            })
+    # 서버 내부 문제
+    except Exception as e:
+        print("에러 발생: ", str(e))
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "internal_server_error"
+        }),500
+    
 ############################################
 # server -> arduino
 ############################################
@@ -557,7 +632,7 @@ def get_ac_temp():
         print("에러 발생: ", str(e))
         return jsonify({
             "result": "failed",
-            "ac_status": None,
+            "ac_state": None,
             "fail_reason": "internal_server_error"
         })
     
