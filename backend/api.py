@@ -111,7 +111,7 @@ def create_user():
 
 # 사용자 목록 조회 api
 @app.route('/serv_fr/users', methods=['GET'])
-def get_user_list():    
+def get_user_list(): 
     try:
         conn = get_connection()
         
@@ -152,17 +152,20 @@ def update_user(user_id):
             "result": "failed",
             "fail_reason": "invalid_type"
         }), 400
-    if temp_preferred is not None and not isinstance(temp_preferred, (int, float)):
-        return jsonify({
-            "result": "failed",
-            "fail_reason": "invalid_type"
-        }), 400
-    # 온도범위초과
-    if temp_preferred > 30 and temp_preferred < 18:
-        return jsonify({
-            "result": "failed",
-            "fail_reason": "temperature out of range"
-        }), 400
+    if temp_preferred is not None:
+        # 타입 불일치
+        if not isinstance(temp_preferred, (int, float)):
+            return jsonify({
+                "result": "failed",
+                "fail_reason": "invalid_type"
+            }), 400
+        
+        # 온도범위초과
+        if temp_preferred > 30 or temp_preferred < 18:
+            return jsonify({
+                "result": "failed",
+                "fail_reason": "temperature out of range"
+            }), 400
     
     # BLE 주소 형식 오류
     if ble_address:
@@ -308,23 +311,37 @@ def get_target_temp():
             "fail_reason": "internal_server_error"
         })
     
-# 현재 공간에 있는 사용자 조회 api(rssi 범위 : 0 ~ -70)
+# 현재 공간에 있는 사용자 조회 api(rssi 범위 : 0 ~ -75 / 현재시간부터 10분안)
 @app.route('/serv_fr/detections/users', methods=['GET'])
 def get_users_in_room():    
+    # 한국 시간 설정
+    kst = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    now_time = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+
     try:
         conn = get_connection()
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT up.user_id,user_name, temp_preferred, ble_address
-            FROM user_presence up
-            JOIN user_info ui 
-            ON up.user_id = ui.user_id 
-            WHERE ble_rssi >= -70 AND ble_rssi IS NOT NULL 
-            GROUP BY up.user_id
-            ORDER BY max(detected_time) DESC
+            SELECT 
+                up.user_id, 
+                u.user_name, 
+                avg(NULLIF(ble_rssi,-128)) AS avg_rssi,
+                POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) AS distance_m,
+                CASE
+                    WHEN POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) <= 2 THEN 'near(≤2m)'
+                    WHEN POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) <= 5 THEN 'mid(≤5m)'
+                    ELSE 'far(>5m)'
+                END AS range_bucket
+            FROM user_presence up 
+            JOIN user_info u
+            ON up.user_id = u.user_id
+            WHERE up.detected_time >= %s - INTERVAL 10 MINUTE
+            GROUP BY user_id
+            HAVING avg_rssi >= -75;
             """
-            cursor.execute(sql)
+            cursor.execute(sql,(now_time,))
             rows = cursor.fetchall()
 
             return jsonify({
@@ -528,27 +545,28 @@ def post_ac_action():
 
 # ir 코드
 ir_code = {
-    "0x83D6D202": "off",
-    "0x494AECFE": "18",
-    "0xC40CEF6F": "19",
-    "0xD0841BCE": "20",
-    "0xBB68F8D3": "21",
-    "0xD55D206A": "22",
-    "0xA13493CD": "23",
-    "0x9E0385F8": "24",
-    "0xBDF9AA79": "25",
-    "0xDBEDD85C": "26",
-    "0xD29E0109": "27",
-    "0xB4EEF966": "28",
-    "0xDE3DD4D": "29",
-    "0x2BD80B30": "30"
+    "0x83D6D202":"off",
+    "0x2BD80B30":"on",
+    "0xD3E0CB48":"30",
+    "0xB5EC9D65":"29",
+    "0xFE0F2A24":"28",
+    "0xD29E0109":"27",
+    "0xFB36156":"26",
+    "0xF5BF39BF":"25",
+    "0x59D52730":"24",
+    "0x449BEA4D":"23",
+    "0xC36335F2":"22",
+    "0xA96F0E5B":"21",
+    "0x68E4752C":"20",
+    "0x2965DF09":"19",
+    "0x14B34D1C":"18"
 }
 # 리모컨 조작 정보 전송 api
 @app.route('/ardu_serv/ir', methods = ['POST'])
 def post_ir():
     data = request.get_json(silent=True) or {}
     raw_signal_data = data.get("raw_signal_data", None)
-    decoded_action = ir_code.get(raw_signal_data, None)
+    ac_action = ir_code.get(raw_signal_data, None)
     target_temp = None
 
     # 한국 시간 설정
@@ -563,7 +581,7 @@ def post_ir():
                 "fail_reason": "missing_required_field"
             }),400
     # 잘못된 ir코드
-    if decoded_action is None:
+    if ac_action is None:
         return jsonify({
                 "result":"failed",
                 "fail_reason": "wrong_ir_code"
@@ -592,7 +610,12 @@ def post_ir():
                           "result": "failed",
                           "fail_reason": "duplicate_time"
                      }),400
-            
+            if ac_action == "off":
+                decoded_action = "OFF"
+            elif ac_action == "on":
+                decoded_action = "ON"
+            elif ac_action in ["18","19","20","21","22","23","24","25","26","27","28","29","30"]:
+                decoded_action = "ON"
             # DB에 정보 생성
             sql = """
             INSERT INTO ir_logs (raw_signal_data, decoded_action, recorded_time)
@@ -600,20 +623,20 @@ def post_ir():
             """
             cursor.execute(sql,(raw_signal_data, decoded_action, recorded_time))
             
-            if decoded_action == "off":
+            if ac_action == "off":
                 oper_action = "OFF"
-            #elif decoded_action == "on":
-            #    oper_action = "ON"
-            #    target_temp = 25
-            else:
+            elif ac_action == "on":
+                oper_action = "ON"
+                target_temp = 25    
+            elif ac_action in ["18","19","20","21","22","23","24","25","26","27","28","29","30"]:
                 oper_action = "SET_TEMP"
-                target_temp = int(decoded_action)
+                target_temp = float(ac_action)
 
             sql = """
             INSERT INTO oper_temp_log (oper_action, target_temp, oper_time)
             VALUES (%s, %s, %s)
             """
-            cursor.execute(sql,(oper_action, target_temp,recorded_time))
+            cursor.execute(sql,(oper_action, target_temp, recorded_time))
 
             conn.commit()
 
