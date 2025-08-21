@@ -111,7 +111,7 @@ def create_user():
 
 # 사용자 목록 조회 api
 @app.route('/serv_fr/users', methods=['GET'])
-def get_user_list():    
+def get_user_list(): 
     try:
         conn = get_connection()
         
@@ -308,23 +308,37 @@ def get_target_temp():
             "fail_reason": "internal_server_error"
         })
     
-# 현재 공간에 있는 사용자 조회 api(rssi 범위 : 0 ~ -70)
+# 현재 공간에 있는 사용자 조회 api(rssi 범위 : 0 ~ -75 / 현재시간부터 10분안)
 @app.route('/serv_fr/detections/users', methods=['GET'])
 def get_users_in_room():    
+    # 한국 시간 설정
+    kst = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    now_time = now_kst.strftime("%Y-%m-%d %H:%M:%S")
+
     try:
         conn = get_connection()
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT up.user_id,user_name, temp_preferred, ble_address
-            FROM user_presence up
-            JOIN user_info ui 
-            ON up.user_id = ui.user_id 
-            WHERE ble_rssi >= -70 AND ble_rssi IS NOT NULL 
-            GROUP BY up.user_id
-            ORDER BY max(detected_time) DESC
+            SELECT 
+                up.user_id, 
+                u.user_name, 
+                avg(NULLIF(ble_rssi,-128)) AS avg_rssi,
+                POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) AS distance_m,
+                CASE
+                    WHEN POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) <= 2 THEN 'near(≤2m)'
+                    WHEN POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) <= 5 THEN 'mid(≤5m)'
+                    ELSE 'far(>5m)'
+                END AS range_bucket
+            FROM user_presence up 
+            JOIN user_info u
+            ON up.user_id = u.user_id
+            WHERE up.detected_time >= %s - INTERVAL 10 MINUTE
+            GROUP BY user_id
+            HAVING avg_rssi >= -75;
             """
-            cursor.execute(sql)
+            cursor.execute(sql,(now_time,))
             rows = cursor.fetchall()
 
             return jsonify({
