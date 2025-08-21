@@ -152,17 +152,20 @@ def update_user(user_id):
             "result": "failed",
             "fail_reason": "invalid_type"
         }), 400
-    if temp_preferred is not None and not isinstance(temp_preferred, (int, float)):
-        return jsonify({
-            "result": "failed",
-            "fail_reason": "invalid_type"
-        }), 400
-    # 온도범위초과
-    if temp_preferred > 30 or temp_preferred < 18:
-        return jsonify({
-            "result": "failed",
-            "fail_reason": "temperature out of range"
-        }), 400
+    if temp_preferred is not None:
+        # 타입 불일치
+        if not isinstance(temp_preferred, (int, float)):
+            return jsonify({
+                "result": "failed",
+                "fail_reason": "invalid_type"
+            }), 400
+        
+        # 온도범위초과
+        if temp_preferred > 30 or temp_preferred < 18:
+            return jsonify({
+                "result": "failed",
+                "fail_reason": "temperature out of range"
+            }), 400
     
     # BLE 주소 형식 오류
     if ble_address:
@@ -624,6 +627,7 @@ def post_ir():
                 oper_action = "OFF"
             elif ac_action == "on":
                 oper_action = "ON"
+                target_temp = 25    
             elif ac_action in ["18","19","20","21","22","23","24","25","26","27","28","29","30"]:
                 oper_action = "SET_TEMP"
                 target_temp = float(ac_action)
