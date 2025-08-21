@@ -52,6 +52,12 @@ def create_user():
             "result": "failed",
             "fail_reason": "invalid_type"
         }), 400
+    # 온도 범위 초과
+    if temp_preferred > 30 and temp_preferred < 18:
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "temperature out of range"
+        }), 400
     
     # BLE 주소 형식 오류
     if ble_address:
@@ -150,6 +156,12 @@ def update_user(user_id):
         return jsonify({
             "result": "failed",
             "fail_reason": "invalid_type"
+        }), 400
+    # 온도범위초과
+    if temp_preferred > 30 and temp_preferred < 18:
+        return jsonify({
+            "result": "failed",
+            "fail_reason": "temperature out of range"
         }), 400
     
     # BLE 주소 형식 오류
@@ -308,7 +320,7 @@ def get_users_in_room():
             FROM user_presence up
             JOIN user_info ui 
             ON up.user_id = ui.user_id 
-            WHERE ble_rssi > -70
+            WHERE ble_rssi >= -70 AND ble_rssi IS NOT NULL 
             GROUP BY up.user_id
             ORDER BY max(detected_time) DESC
             """
@@ -438,7 +450,7 @@ def post_ble():
 def post_ac_action():
     data = request.get_json(silent=True) or {}
     ac_action = data.get("ac_action", None)
-    ac_temp = data.get("ac_temp",None)
+    ac_temp = None
 
     # 한국 시간 설정
     kst = pytz.timezone("Asia/Seoul")
@@ -446,18 +458,13 @@ def post_ac_action():
     now_time = now_kst.strftime("%Y-%m-%d %H:%M:%S")
 
     # 필수 정보 누락
-    if not ac_action or not ac_temp :
+    if not ac_action:
          return jsonify({
                 "result":"failed",
                 "fail_reason": "missing_required_field"
             }),400
     
     # 타입 불일치
-    if ac_temp is not None and not isinstance(ac_temp, (float)):
-        return jsonify({
-            "result": "failed",
-            "fail_reason": "invalid_type"
-        }), 400
     if ac_action is not None and not isinstance(ac_action, (str)):
         return jsonify({
             "result": "failed",
@@ -483,7 +490,6 @@ def post_ac_action():
             # OFF일 경우
             if ac_action[0] == "0":
                 ac_action = "OFF"
-                ac_temp = None
             # ON일 경우
             elif ac_action[0] == "1":
                 ac_action = "ON"
@@ -491,13 +497,20 @@ def post_ac_action():
             elif ac_action[0] == "t":
                 ac_temp = float(ac_action[1:])
                 ac_action = "ON"
+                auto_action = "SET_TEMP"
                 
             # DB에 정보 생성
-            sql = """
+            state_sql = """
             INSERT INTO ac_state (ac_action, ac_temp, timestamp)
             VALUES (%s, %s, %s)
             """
-            cursor.execute(sql,(ac_action, ac_temp, now_time))
+            cursor.execute(state_sql,(ac_action, ac_temp, now_time))
+
+            log_sql = """
+            INSERT INTO auto_temp_log (user_id, auto_time, auto_action, auto_temp)
+            VALUES (%s, %s, %s, %s)
+            """
+            cursor.execute(log_sql,(1,now_time , auto_action, ac_temp))
             
             conn.commit()
 
@@ -515,28 +528,28 @@ def post_ac_action():
 
 # ir 코드
 ir_code = {
-        "0x83D6D202": "off",
-        "0x2BD80B30": "on",
-        "0xD3E0CB48" : "30",
-        "0xB5EC9D65" : "29",
-        "0xFE0F2A24" : "28",
-        "0xD29E0109" : "27",
-        "0xFB36156" : "26",
-        "0xF5BF39BF" : "25",
-        "0x59D52730" : "24",
-        "0x449BEA4D" : "23",
-        "0xC36335F2" : "22",
-        "0xA96F0E5B" : "21",
-        "0x68E4752C" : "20",
-        "0x2965DF09" : "19",
-        "0x14B34D1C" : "18"
-    }
+    "0x83D6D202": "off",
+    "0x494AECFE": "18",
+    "0xC40CEF6F": "19",
+    "0xD0841BCE": "20",
+    "0xBB68F8D3": "21",
+    "0xD55D206A": "22",
+    "0xA13493CD": "23",
+    "0x9E0385F8": "24",
+    "0xBDF9AA79": "25",
+    "0xDBEDD85C": "26",
+    "0xD29E0109": "27",
+    "0xB4EEF966": "28",
+    "0xDE3DD4D": "29",
+    "0x2BD80B30": "30"
+}
 # 리모컨 조작 정보 전송 api
 @app.route('/ardu_serv/ir', methods = ['POST'])
 def post_ir():
     data = request.get_json(silent=True) or {}
     raw_signal_data = data.get("raw_signal_data", None)
     decoded_action = ir_code.get(raw_signal_data, None)
+    target_temp = None
 
     # 한국 시간 설정
     kst = pytz.timezone("Asia/Seoul")
@@ -587,6 +600,21 @@ def post_ir():
             """
             cursor.execute(sql,(raw_signal_data, decoded_action, recorded_time))
             
+            if decoded_action == "off":
+                oper_action = "OFF"
+            #elif decoded_action == "on":
+            #    oper_action = "ON"
+            #    target_temp = 25
+            else:
+                oper_action = "SET_TEMP"
+                target_temp = int(decoded_action)
+
+            sql = """
+            INSERT INTO oper_temp_log (oper_action, target_temp, oper_time)
+            VALUES (%s, %s, %s)
+            """
+            cursor.execute(sql,(oper_action, target_temp,recorded_time))
+
             conn.commit()
 
             return jsonify({
@@ -613,10 +641,16 @@ def get_ac_temp():
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT ac_action, ac_temp
-            FROM ac_state
-            ORDER BY timestamp DESC
-            LIMIT 1;
+            SELECT round(AVG(temp_preferred),0) AS avg_temp_preferred
+            FROM(
+			    SELECT ui.temp_preferred
+                FROM user_presence up
+                JOIN user_info ui 
+                ON up.user_id = ui.user_id 
+                WHERE ble_rssi > -70
+                GROUP BY up.user_id
+                ORDER BY max(detected_time) DESC
+            ) t;
             """
             cursor.execute(sql)
             row = cursor.fetchone()
@@ -624,21 +658,21 @@ def get_ac_temp():
             if row is None:
                 return jsonify({
                     "result": "failed",
-                    "ac_state": None,
-                    "fail_reason": "no_ac_state" 
+                    "avg_temp_preferred": None,
+                    "fail_reason": "no_avg_temp_preferred" 
                 })
 
             return jsonify({
                 "result": "success", 
                 "fail_reason": None,
-                "ac_state": row
+                "avg_temp_preferred": row["avg_temp_preferred"]
             })
     # 서버 내부 문제
     except Exception as e:
         print("에러 발생: ", str(e))
         return jsonify({
             "result": "failed",
-            "ac_state": None,
+            "avg_temp_preferred": None,
             "fail_reason": "internal_server_error"
         })
     
