@@ -546,7 +546,20 @@ def post_ac_action():
 # ir 코드
 ir_code = {
     "0x83D6D202":"off",
+    "0x494AECFE":"on",
+    "0xC40CEF6F":"on",
+    "0xD0841BCE":"on",
+    "0xBB68F8D3":"on",
+    "0xD55D206A":"on",
+    "0xA13493CD":"on",
+    "0x9E0385F8":"on",
+    "0xBDF9AA79":"on",
+    "0xDBEDD85C":"on",
+    "0xD29E0109":"on",
+    "0xB4EEF966":"on",
+    "0xDE3DD4D":"on",
     "0x2BD80B30":"on",
+    
     "0xD3E0CB48":"30",
     "0xB5EC9D65":"29",
     "0xFE0F2A24":"28",
