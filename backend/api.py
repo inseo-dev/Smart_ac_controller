@@ -347,7 +347,7 @@ def get_users_in_room():
                 GROUP BY user_id
                 HAVING avg_rssi >= -75
             ) t
-            WHERE t.last_detected >= %s - INTERVAL 15 SECOND;
+            WHERE t.last_detected >= %s - INTERVAL 1 MINUTE;
             """
             cursor.execute(sql,(now_time, now_time))
             rows = cursor.fetchall()
