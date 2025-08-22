@@ -295,7 +295,7 @@ def get_target_temp():
                 FROM user_presence up 
                 JOIN user_info u
                 ON up.user_id = u.user_id
-                WHERE up.detected_time >= %s - INTERVAL 15 SECOND
+                WHERE up.detected_time >= %s - INTERVAL 60 MINUTE
                 GROUP BY up.user_id
                 HAVING avg_rssi >= -75
             ) t
