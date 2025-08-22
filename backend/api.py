@@ -277,30 +277,38 @@ def get_ac_state():
     
 # 현재 설정 온도 조회 api (우선 방안에 있는 사람들 선호온도 평균으로 구함/소수점 첫째자리 반올림) 
 @app.route('/serv_fr/env/target_temp', methods=['GET'])
-def get_target_temp():    
+def get_target_temp():   
+    # 한국 시간 설정
+    kst = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    now_time = now_kst.strftime("%Y-%m-%d %H:%M:%S") 
     try:
         conn = get_connection()
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT round(AVG(temp_preferred),0) AS avg_temp
+            SELECT round(AVG(temp_preferred),0) as avg_temp
             FROM(
-			    SELECT ui.temp_preferred
-                FROM user_presence up
-                JOIN user_info ui 
-                ON up.user_id = ui.user_id 
-                WHERE ble_rssi > -70
+                SELECT 
+                    up.user_id, 
+                    avg(NULLIF(ble_rssi,-128)) AS avg_rssi
+                FROM user_presence up 
+                JOIN user_info u
+                ON up.user_id = u.user_id
+                WHERE up.detected_time >= %s - INTERVAL 10 MINUTE
                 GROUP BY up.user_id
-                ORDER BY max(detected_time) DESC
-            ) t;
+                HAVING avg_rssi >= -75
+            ) t
+            JOIN user_info u
+            ON t.user_id = u.user_id
             """
-            cursor.execute(sql)
+            cursor.execute(sql,(now_time))
             row = cursor.fetchone()
 
             return jsonify({
                 "result": "success", 
                 "fail_reason": None,
-                "target_temp": row["avg_temp"]
+                "target_temp": row
             })
     # 서버 내부 문제
     except Exception as e:
@@ -337,7 +345,7 @@ def get_users_in_room():
             FROM user_presence up 
             JOIN user_info u
             ON up.user_id = u.user_id
-            WHERE up.detected_time >= %s - INTERVAL 10 MINUTE
+            WHERE up.detected_time >= %s - INTERVAL 15 SECOND
             GROUP BY user_id
             HAVING avg_rssi >= -75;
             """
