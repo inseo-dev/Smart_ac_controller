@@ -680,23 +680,31 @@ def post_ir():
 # 에어컨 설정 호출 api
 @app.route('/serv_ardu/ac/users', methods=['GET'])
 def get_ac_temp():    
+    # 한국 시간 설정
+    kst = pytz.timezone("Asia/Seoul")
+    now_kst = datetime.now(kst)
+    now_time = now_kst.strftime("%Y-%m-%d %H:%M:%S")
     try:
         conn = get_connection()
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT round(AVG(temp_preferred),0) AS avg_temp_preferred
+            SELECT round(AVG(temp_preferred),0) as avg_temp_preferred
             FROM(
-			    SELECT ui.temp_preferred
-                FROM user_presence up
-                JOIN user_info ui 
-                ON up.user_id = ui.user_id 
-                WHERE ble_rssi > -70
+                SELECT 
+                    up.user_id, 
+                    avg(NULLIF(ble_rssi,-128)) AS avg_rssi
+                FROM user_presence up 
+                JOIN user_info u
+                ON up.user_id = u.user_id
+                WHERE up.detected_time >= %s - INTERVAL 1 MINUTE
                 GROUP BY up.user_id
-                ORDER BY max(detected_time) DESC
-            ) t;
+                HAVING avg_rssi >= -75
+            ) t
+            JOIN user_info u
+            ON t.user_id = u.user_id
             """
-            cursor.execute(sql)
+            cursor.execute(sql,(now_time,))
             row = cursor.fetchone()
 
             if row is None:
