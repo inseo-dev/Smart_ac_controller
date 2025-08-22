@@ -308,7 +308,7 @@ def get_target_temp():
             return jsonify({
                 "result": "success", 
                 "fail_reason": None,
-                "target_temp": row
+                "target_temp": row["avg_temp"]
             })
     # 서버 내부 문제
     except Exception as e:
