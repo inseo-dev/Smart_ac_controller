@@ -295,7 +295,7 @@ def get_target_temp():
                 FROM user_presence up 
                 JOIN user_info u
                 ON up.user_id = u.user_id
-                WHERE up.detected_time >= %s - INTERVAL 10 MINUTE
+                WHERE up.detected_time >= %s - INTERVAL 15 SECOND
                 GROUP BY up.user_id
                 HAVING avg_rssi >= -75
             ) t
@@ -332,24 +332,24 @@ def get_users_in_room():
         
         with conn.cursor() as cursor:
             sql = """
-            SELECT 
-                up.user_id, 
-                u.user_name, 
-                avg(NULLIF(ble_rssi,-128)) AS avg_rssi,
-                POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) AS distance_m,
-                CASE
-                    WHEN POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) <= 2 THEN 'near(≤2m)'
-                    WHEN POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) <= 5 THEN 'mid(≤5m)'
-                    ELSE 'far(>5m)'
-                END AS range_bucket
-            FROM user_presence up 
-            JOIN user_info u
-            ON up.user_id = u.user_id
-            WHERE up.detected_time >= %s - INTERVAL 15 SECOND
-            GROUP BY user_id
-            HAVING avg_rssi >= -75;
+            SELECT t.user_id, t.user_name, t.distance_m
+            FROM(
+                SELECT 
+                    up.user_id, 
+                    u.user_name,
+                    MAX(up.detected_time) AS last_detected,
+                    avg(NULLIF(ble_rssi,-128)) AS avg_rssi,
+                    POW(10, (-59 - avg(NULLIF(ble_rssi,-128))) / (10 * 2.7)) AS distance_m
+                FROM user_presence up 
+                JOIN user_info u
+                ON up.user_id = u.user_id
+                WHERE up.detected_time >= %s - INTERVAL 10 MINUTE
+                GROUP BY user_id
+                HAVING avg_rssi >= -75
+            ) t
+            WHERE t.last_detected >= %s - INTERVAL 15 SECOND;
             """
-            cursor.execute(sql,(now_time,))
+            cursor.execute(sql,(now_time, now_time))
             rows = cursor.fetchall()
 
             return jsonify({
