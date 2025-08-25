@@ -712,8 +712,13 @@ def get_ac_temp():
                     "result": "failed",
                     "avg_temp_preferred": None,
                     "fail_reason": "no_avg_temp_preferred" 
+                }) 
+            elif row["avg_temp_preferred"] == None:
+                return jsonify({
+                    "result": "success", 
+                    "fail_reason": None,
+                    "avg_temp_preferred": 0
                 })
-
             return jsonify({
                 "result": "success", 
                 "fail_reason": None,
@@ -728,7 +733,6 @@ def get_ac_temp():
             "fail_reason": "internal_server_error"
         })
     
-
 
 
 app.run(debug=True, host='0.0.0.0', port=5000)
